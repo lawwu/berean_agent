@@ -11,10 +11,13 @@ from langgraph.prebuilt import ToolNode
 from langchain_community.document_loaders import WebBaseLoader
 
 from src.llm import llm_gpt_4o, llm_gpt_4o_mini
-from src.utils import PageSessionState, BaseChatAgent
+from src.utils import PageSessionState, BaseChatAgent, check_password
 
 # Load environment variables
 load_dotenv()
+
+if not check_password():
+    st.stop()
 
 def get_website(url: str) -> str:
     loader = WebBaseLoader(url)

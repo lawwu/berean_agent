@@ -1,13 +1,14 @@
 import os
 import json
 import base64
+import logging
 import tempfile
 from typing import Dict, Any, Optional, Callable
 from pathlib import Path
+import hmac
 import streamlit as st
 from dotenv import load_dotenv, find_dotenv
 from langchain.schema import HumanMessage
-import logging
 from src.st_callable_util import get_streamlit_cb
 
 project_dir = Path(__file__).resolve().parents[1]
@@ -221,3 +222,30 @@ class BaseChatAgent:
         self.initialize_state()
         self.display_chat_history()
         self.handle_chat()
+
+
+def check_password():
+    """Returns `True` if the user had the correct password."""
+    def password_entered():
+        # If you use .streamlit/secrets.toml, replace os.environ.get with st.secrets["STREAMLIT_PASSWORD"]
+        if hmac.compare_digest(st.session_state["password"], os.environ.get("STREAMLIT_PASSWORD", "")):
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]
+        else:
+            st.session_state["password_correct"] = False
+
+    # Return True if the password is validated.
+    if st.session_state.get("password_correct", False):
+        return True
+
+    # st.info(f"Password: {os.environ.get('STREAMLIT_PASSWORD', '')}")
+    # Show input for password.
+    st.text_input(
+        "Password", type="password", on_change=password_entered, key="password"
+    )
+    if "password_correct" in st.session_state:
+        st.error("😕 Password incorrect")
+    return False
+
+if not check_password():
+    st.stop()
