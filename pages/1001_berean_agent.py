@@ -1,12 +1,12 @@
 import os
+from datetime import datetime
+from typing import TypedDict, Annotated, List, Literal, Dict, Any, Optional, Callable
+
 from dotenv import load_dotenv
 import streamlit as st
-from datetime import datetime
-from typing import TypedDict, Annotated, List, Literal
 from langchain_core.messages import SystemMessage, AIMessage
 from langgraph.graph import START, MessagesState, StateGraph
 from langgraph.graph.message import AnyMessage, add_messages
-from langgraph.managed import IsLastStep
 from langgraph.prebuilt import ToolNode
 from langchain_community.document_loaders import WebBaseLoader
 
@@ -19,52 +19,131 @@ load_dotenv()
 if not check_password():
     st.stop()
 
+
 def get_website(url: str) -> str:
-    loader = WebBaseLoader(url)
-    loader.requests_kwargs = {'verify':False}
-    docs = loader.load()
-    # docs[0].__dict__['page_content']
-    return docs
+    """
+    Fetch and extract content from a given URL.
+    
+    Args:
+        url: The URL to fetch content from
+        
+    Returns:
+        The extracted text content from the webpage
+        
+    Raises:
+        Exception: If there's an error fetching or parsing the webpage
+    """
+    try:
+        loader = WebBaseLoader(url)
+        loader.requests_kwargs = {'verify': False}
+        docs = loader.load()
+        return docs[0].__dict__['page_content'].strip()
+    except Exception as e:
+        st.error(f"Error fetching content from {url}: {str(e)}")
+        return f"Unable to fetch content: {str(e)}"
 
 
 class BereanAgentState(TypedDict):
+    """Type definition for the Berean Agent state."""
     messages: Annotated[List[AnyMessage], add_messages]
 
 
+class BereanWebContent:
+    """Helper class for fetching Berean Church web content."""
+    
+    BASE_URL = "https://bereancc.com"
+    
+    @staticmethod
+    def get_page_content(path: str, description: str) -> Callable[[], str]:
+        """
+        Create a function that fetches content from a specific Berean webpage.
+        
+        Args:
+            path: The URL path after the base URL
+            description: Description of the content being fetched
+            
+        Returns:
+            A function that when called, fetches the content
+        """
+        def fetch_content() -> str:
+            """
+            Get the content of the {description}.
+            
+            Returns:
+                The webpage content as text
+            """
+            url = f"{BereanWebContent.BASE_URL}/{path}"
+            return get_website(url)
+            
+        # Set the docstring and function name properly
+        fetch_content.__doc__ = f"Get the content of the {description}."
+        fetch_content.__name__ = f"get_{path.replace('-', '_')}_content"
+        
+        return fetch_content
 
-def get_vision_content() -> str:
-    """Get the content of the Berean Vision page"""
-    url = "https://bereancc.com/our-vision"
-    docs = get_website(url)
-    return docs[0].__dict__['page_content'].strip()
 
-def get_resources_content() -> str:
-    """Get the content of the Berean Resources page which includes recommended books"""
-    url = "https://bereancc.com/resources"
-    docs = get_website(url)
-    return docs[0].__dict__['page_content'].strip()
+# Define tool functions using the helper class
+get_resources_content = BereanWebContent.get_page_content("resources", "Berean Resources page which includes recommended books")
+get_what_we_believe_content = BereanWebContent.get_page_content("what-we-believe", "Berean What We Believe page")
+get_distinctives_content = BereanWebContent.get_page_content("distinctives", "Berean Distinctives page")
+get_vision_content = BereanWebContent.get_page_content("our-vision", "Berean Vision page")
+get_membership_covenant_content = BereanWebContent.get_page_content("membership-covenant", "Berean Membership Covenant page")
+get_meeting_times_content = BereanWebContent.get_page_content("meeting-times-amp-location", "Berean Meeting Times page")
+get_what_is_the_gospel_content = BereanWebContent.get_page_content("what-is-the-gospel", "Berean What is the Gospel page")
 
-tools =[
-    get_vision_content,
+# List of available tools for the agent
+tools = [
     get_resources_content,
+    get_what_we_believe_content,
+    get_distinctives_content,
+    get_vision_content,
+    get_membership_covenant_content,
+    get_meeting_times_content,
+    get_what_is_the_gospel_content,
 ]
 
 
-def create_berean_agent_graph():
+def create_berean_agent_graph() -> Any:
+    """
+    Create and return a compiled state graph for the Berean agent.
+    
+    Returns:
+        A compiled state graph that can be executed
+    """
     current_date = datetime.now().strftime("%B %d, %Y")
     system_prompt = f"""You are a helpful assistant for Berean Community Church. Today's date is {current_date}
 
-    You have access to tools to fetch the latest events and resources from the church website.
+    You have access to tools to fetch the latest content from the Berean Community Church website.
     """
 
-
-    def call_model(state: BereanAgentState):
+    def call_model(state: BereanAgentState) -> Dict[str, List[AIMessage]]:
+        """
+        Call the LLM with the current conversation state.
+        
+        Args:
+            state: The current conversation state
+            
+        Returns:
+            Updated state with the model's response
+        """
         llm = llm_gpt_4o_mini.bind_tools(tools)
         messages = [SystemMessage(content=system_prompt)] + state["messages"]
         response = llm.invoke(messages)
         return {"messages": [response]}
 
     def should_continue(state: BereanAgentState) -> Literal["tools", "__end__"]:
+        """
+        Determine if the conversation should continue or end.
+        
+        Args:
+            state: The current conversation state
+            
+        Returns:
+            Next node to route to ("tools" or "__end__")
+            
+        Raises:
+            TypeError: If the last message is not an AIMessage
+        """
         last_message = state["messages"][-1]
         if not isinstance(last_message, AIMessage):
             raise TypeError(f"Expected AIMessage, got {type(last_message)}")
@@ -86,8 +165,13 @@ def create_berean_agent_graph():
     return workflow.compile()
 
 
-def initialize_page_state(page_state: PageSessionState):
-    """Initialize all required state variables for the page"""
+def initialize_page_state(page_state: PageSessionState) -> None:
+    """
+    Initialize all required state variables for the page.
+    
+    Args:
+        page_state: The current session state object
+    """
     if "messages" not in page_state:
         page_state["messages"] = []
     if "graph" not in page_state:
@@ -95,15 +179,21 @@ def initialize_page_state(page_state: PageSessionState):
 
 
 class BereanChatAgent(BaseChatAgent):
-    def __init__(self):
+    """Chat agent implementation for the Berean Church assistant."""
+    
+    def __init__(self) -> None:
+        """Initialize the Berean chat agent."""
         super().__init__("ukg", create_berean_agent_graph)
 
 
-def main():
+def main() -> None:
+    """Main function to run the Streamlit application."""
     st.title("Berean Assistant")
     st.markdown("""
     I can help you with:
     - Answering questions about Berean's Vision and Recommended books
+    - Information about church beliefs, distinctives, and meeting times
+    - Details about membership and the gospel
     """)
 
     agent = BereanChatAgent()
